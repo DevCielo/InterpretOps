@@ -13,6 +13,7 @@ from .streaming_writer import HDF5ActivationWriter
 from .config import CaptureConfig
 from .utils import parse_dataset
 from .sae_trainer import train_sae
+from .circuit_search import discover_circuit
 
 
 @click.group()
@@ -193,7 +194,7 @@ def capture(model: str, dataset: str, output: str, layers: Optional[str],
 def sae_train(config: str, activations: str, layer: str, output: str):
     """
     Train a Sparse Autoencoder (SAE) on activation data.
-    
+
     Example:
         mechctl sae-train --config sae_config.yaml --activations activations.h5 --layer layers.8.mlp --output layer_8_features.pt
     """
@@ -205,14 +206,131 @@ def sae_train(config: str, activations: str, layer: str, output: str):
             output_path=output,
             verbose=True
         )
-        
+
         click.echo(f"\n[OK] Training complete!")
         click.echo(f"  Final Reconstruction R²: {results['reconstruction_metrics']['r_squared']:.4f}")
         click.echo(f"  Final Sparsity: {results['final_sparsity']:.1f}%")
         click.echo(f"  Model saved to: {output}")
-        
+
     except Exception as e:
         click.echo(f"Error during SAE training: {e}", err=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+@main.command()
+@click.option('--model', required=True, help='Model name (HuggingFace identifier)')
+@click.option('--clean-prompts', required=True, type=click.Path(exists=True), help='Path to JSON file with clean prompts')
+@click.option('--corrupt-prompts', required=True, type=click.Path(exists=True), help='Path to JSON file with corrupt prompts')
+@click.option('--target-tokens', default=None, help='Comma-separated target tokens to measure (e.g., "refuse,decline")')
+@click.option('--patch-type', default='mlp', type=click.Choice(['activation', 'attention', 'mlp']), help='Type of patching to perform')
+@click.option('--layers', default=None, help='Comma-separated layer patterns to patch (default: all)')
+@click.option('--sae-dir', default=None, help='Directory containing SAE models (.pt files)')
+@click.option('--output', default='circuit_graph.json', help='Output circuit graph JSON file')
+@click.option('--device', default='auto', help='Device to use (auto, cpu, cuda)')
+@click.option('--max-iterations', default=10, type=int, help='Maximum pruning iterations')
+@click.option('--pruning-threshold', default=0.01, type=float, help='Minimum causal score to keep nodes')
+def circuit_search(model: str, clean_prompts: str, corrupt_prompts: str, target_tokens: Optional[str],
+                  patch_type: str, layers: Optional[str], sae_dir: Optional[str], output: str,
+                  device: str, max_iterations: int, pruning_threshold: float):
+    """
+    Discover causal circuits using activation patching.
+
+    Example:
+        mechctl circuit-search --model EleutherAI/pythia-2.8b \\
+            --clean-prompts clean_examples.json \\
+            --corrupt-prompts jailbreak_examples.json \\
+            --target-tokens "I cannot,I'm sorry" \\
+            --patch-type mlp \\
+            --sae-dir ./saes/ \\
+            --output refusal_circuit.json
+    """
+    try:
+        # Determine device
+        if device == 'auto':
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            device = device
+
+        click.echo(f"Using device: {device}")
+
+        # Load prompts
+        click.echo(f"Loading clean prompts from {clean_prompts}")
+        with open(clean_prompts, 'r') as f:
+            clean_data = json.load(f)
+        clean_prompt_list = parse_dataset(clean_data)
+        click.echo(f"Loaded {len(clean_prompt_list)} clean prompts")
+
+        click.echo(f"Loading corrupt prompts from {corrupt_prompts}")
+        with open(corrupt_prompts, 'r') as f:
+            corrupt_data = json.load(f)
+        corrupt_prompt_list = parse_dataset(corrupt_data)
+        click.echo(f"Loaded {len(corrupt_prompt_list)} corrupt prompts")
+
+        # Parse target tokens
+        target_token_list = None
+        if target_tokens:
+            target_token_list = [t.strip() for t in target_tokens.split(',')]
+            click.echo(f"Measuring probability of tokens: {target_token_list}")
+
+        # Parse layers
+        layer_list = None
+        if layers:
+            layer_list = [l.strip() for l in layers.split(',')]
+            click.echo(f"Patching layers matching: {layer_list}")
+
+        # Load SAE paths if provided
+        sae_paths = None
+        if sae_dir and patch_type == 'mlp':
+            sae_paths = {}
+            sae_dir_path = Path(sae_dir)
+            if sae_dir_path.exists():
+                for sae_file in sae_dir_path.glob('*.pt'):
+                    # Try to extract layer name from filename
+                    # e.g., "layer_8_features.pt" -> "layers.8.mlp"
+                    filename = sae_file.stem
+                    if 'layer_' in filename and '_features' in filename:
+                        try:
+                            layer_num = filename.split('layer_')[1].split('_features')[0]
+                            layer_name = f"layers.{layer_num}.mlp"
+                            sae_paths[layer_name] = str(sae_file)
+                        except:
+                            pass
+                click.echo(f"Found {len(sae_paths)} SAE models: {list(sae_paths.keys())}")
+            else:
+                click.echo(f"SAE directory {sae_dir} not found", err=True)
+
+        # Run circuit discovery
+        click.echo(f"\nStarting circuit discovery with {patch_type} patching...")
+        click.echo(f"Max iterations: {max_iterations}, Pruning threshold: {pruning_threshold}")
+
+        circuit_graph = discover_circuit(
+            model_name=model,
+            clean_prompts=clean_prompt_list,
+            corrupt_prompts=corrupt_prompt_list,
+            target_tokens=target_token_list,
+            patch_type=patch_type,
+            layers_to_patch=layer_list,
+            sae_paths=sae_paths,
+            output_path=output,
+            device=device,
+            max_iterations=max_iterations,
+            pruning_threshold=pruning_threshold,
+        )
+
+        # Print summary
+        click.echo(f"\n[OK] Circuit discovery complete!")
+        click.echo(f"  Discovered {len(circuit_graph.nodes)} nodes")
+        click.echo(f"  Circuit graph saved to: {output}")
+
+        if circuit_graph.nodes:
+            click.echo("\nTop causal nodes:")
+            for i, node in enumerate(circuit_graph.nodes[:5]):
+                click.echo(f"  {i+1}. {node.node_id}: CCS={node.causal_score:.4f}")
+
+    except Exception as e:
+        click.echo(f"Error during circuit discovery: {e}", err=True)
         import traceback
         traceback.print_exc()
         sys.exit(1)
