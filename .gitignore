@@ -136,6 +136,13 @@ dmypy.json
 activations*.h5
 test_activations*.h5
 
+# Trained model checkpoints and weights
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.pickle
+
 # Model cache (HuggingFace)
 .cache/
 models/
@@ -146,6 +153,27 @@ models/
 # Uncomment if you don't want to track datasets
 # *.json
 # datasets/
+
+# Experiment tracking and ML logs
+tensorboard/
+wandb/
+mlruns/
+runs/
+lightning_logs/
+comet.ml/
+
+# GPU/cache files
+*.npy
+*.npz
+
+# Jupyter notebooks (uncomment if you want to ignore)
+# *.ipynb
+
+# Development and testing
+.coverage
+.pytest_cache/
+*.prof
+profile_output/
 
 # Logs
 *.log
