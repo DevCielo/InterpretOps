@@ -1,0 +1,21 @@
+# SAE Training Configuration
+
+# SAE Architecture
+hidden_dim: 8192  # Dictionary size (number of features)
+
+# Training Hyperparameters
+sparsity_coef: 0.001  # L1 regularization coefficient
+learning_rate: 0.0001
+batch_size: 4096
+epochs: 10
+
+# Data
+max_activations: 50000  # Maximum number of activation vectors to use (None = use all)
+
+# Hardware
+device: cuda  # "cuda" or "cpu"
+
+# Optimizer
+optimizer: adam  # "adam" or "sgd"
+weight_decay: 0.0
+

@@ -59,9 +59,12 @@ def detect_mlp_layers(model: nn.Module, layer_patterns: Optional[List[str]] = No
         # Check if module name or type matches patterns
         if any(pattern.lower() in name_lower for pattern in layer_patterns):
             # Verify it's actually an MLP-like module
-            if 'mlp' in module_type or 'ffn' in module_type or hasattr(module, 'fc1') or hasattr(module, 'gate_proj'):
+            if ('mlp' in module_type or 'ffn' in module_type or 'feedforward' in module_type or
+                hasattr(module, 'fc1') or hasattr(module, 'gate_proj') or
+                isinstance(module, nn.Sequential)):
                 mlp_layers.append(name)
-        elif 'mlp' in module_type or 'ffn' in module_type or 'feedforward' in module_type:
+        elif ('mlp' in module_type or 'ffn' in module_type or 'feedforward' in module_type or
+              isinstance(module, nn.Sequential)):
             mlp_layers.append(name)
     
     return mlp_layers

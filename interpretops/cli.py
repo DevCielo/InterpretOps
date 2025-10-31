@@ -12,6 +12,7 @@ from .activation_capture import ActivationCapture
 from .streaming_writer import HDF5ActivationWriter
 from .config import CaptureConfig
 from .utils import parse_dataset
+from .sae_trainer import train_sae
 
 
 @click.group()
@@ -182,6 +183,39 @@ def capture(model: str, dataset: str, output: str, layers: Optional[str],
                                 click.echo(f"    Activation shape: {ds.attrs['activation_shape']}")
         except Exception as e:
             click.echo(f"Could not read output file summary: {e}", err=True)
+
+
+@main.command()
+@click.option('--config', required=True, type=click.Path(exists=True), help='Path to sae_config.yaml')
+@click.option('--activations', required=True, type=click.Path(exists=True), help='Path to input HDF5 activations file')
+@click.option('--layer', required=True, help='Layer name to train SAE for')
+@click.option('--output', required=True, help='Output .pt file path (e.g., layer_8_features.pt)')
+def sae_train(config: str, activations: str, layer: str, output: str):
+    """
+    Train a Sparse Autoencoder (SAE) on activation data.
+    
+    Example:
+        mechctl sae-train --config sae_config.yaml --activations activations.h5 --layer layers.8.mlp --output layer_8_features.pt
+    """
+    try:
+        results = train_sae(
+            config_path=config,
+            activations_path=activations,
+            layer_name=layer,
+            output_path=output,
+            verbose=True
+        )
+        
+        click.echo(f"\n[OK] Training complete!")
+        click.echo(f"  Final Reconstruction R²: {results['reconstruction_metrics']['r_squared']:.4f}")
+        click.echo(f"  Final Sparsity: {results['final_sparsity']:.1f}%")
+        click.echo(f"  Model saved to: {output}")
+        
+    except Exception as e:
+        click.echo(f"Error during SAE training: {e}", err=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == '__main__':
